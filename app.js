@@ -517,7 +517,10 @@ function drawSvg(data, o) {
   // garden area: outline pass, then fill pass, so overlapping shapes merge into one outline
   const shapes = data.shapes || [];
   const by = r => shapes.filter(s => roleOf(s, shapes) === r);
-  const adds = by('space'), zones = by('zone'), beds = by('bed'), cuts = by('cut');
+  const spaces = by('space'), zones = by('zone'), beds = by('bed'), cuts = by('cut');
+  // a space outline sitting inside a bigger one can't merge into it, so it gets its own visible outline
+  const nested = s => spaces.some(o => o !== s && inside(o, s) && o.w * o.h > s.w * s.h);
+  const adds = spaces.filter(s => !nested(s)), innerSpaces = spaces.filter(nested);
   const interShapes = o.mode === 'shape';
   out.push('<g>');
   adds.forEach(s => out.push(shapeTag(s, `fill="none" stroke="#5b5f52" stroke-width="5" ${nss}`)));
@@ -534,6 +537,7 @@ function drawSvg(data, o) {
       if (t) out.push(`<text x="${s.x + s.w / 2}" y="${s.y + s.h / 2}" font-size="${fs}" font-weight="600" text-anchor="middle" dominant-baseline="central" fill="${ink}" pointer-events="none">${esc(t)}</text>`);
     }
   });
+  filled(innerSpaces, '#efe5c8', '#5b5f52', '#6b604a');
   filled(zones, '#e3e1db', '#7d8077', '#4a4d45');
   filled(beds, 'url(#bed)', '#4e8f3a', '#2f5e27');
   cuts.forEach(s => {
