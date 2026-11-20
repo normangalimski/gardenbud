@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="86 96 340 340">
+  <rect x="86" y="96" width="340" height="340" fill="#D3E8B8"/>
+  <path d="M150 436 Q150 352 256 346 Q362 352 362 436 Z" fill="#4E8F3A"/>
+  <rect x="216" y="380" width="80" height="60" rx="12" fill="#7A5230"/>
+  <!-- head -->
+  <circle cx="256" cy="262" r="86" fill="#E8B48A"/>
+  <circle cx="214" cy="290" r="13" fill="#F28B82" opacity=".55"/>
+  <circle cx="298" cy="290" r="13" fill="#F28B82" opacity=".55"/>
+  <!-- eyes -->
+  <ellipse cx="226" cy="262" rx="9" ry="12" fill="#2E2A24"/>
+  <ellipse cx="286" cy="262" rx="9" ry="12" fill="#2E2A24"/>
+  <circle cx="229" cy="257" r="3" fill="#fff"/>
+  <circle cx="289" cy="257" r="3" fill="#fff"/>
+  <!-- confident grin -->
+  <path d="M228 298 Q256 322 284 298" fill="none" stroke="#2E2A24" stroke-width="6" stroke-linecap="round"/>
+  <!-- straw -->
+  <path d="M276 306 L338 290" stroke="#F2C94C" stroke-width="6" stroke-linecap="round"/>
+  <path d="M330 286 L346 280 M332 292 L348 292" stroke="#F2C94C" stroke-width="4" stroke-linecap="round"/>
+  <!-- sunhat -->
+  <ellipse cx="256" cy="200" rx="148" ry="34" fill="#D9A441"/>
+  <ellipse cx="256" cy="196" rx="148" ry="30" fill="#E9B957"/>
+  <path d="M182 196 Q186 118 256 114 Q326 118 330 196 Z" fill="#E9B957"/>
+  <path d="M182 196 Q256 210 330 196 L328 178 Q256 192 184 178 Z" fill="#4E8F3A"/>
+  <path d="M200 160 Q256 150 312 160 M196 140 Q256 128 316 140" fill="none" stroke="#C98F2E" stroke-width="3" opacity=".7"/>
+  <!-- flowers on hat band -->
+  <g transform="translate(300 186)">
+    <circle cx="0" cy="-9" r="7" fill="#F48FB1"/><circle cx="9" cy="0" r="7" fill="#F48FB1"/>
+    <circle cx="0" cy="9" r="7" fill="#F48FB1"/><circle cx="-9" cy="0" r="7" fill="#F48FB1"/>
+    <circle r="5" fill="#F2C94C"/>
+  </g>
+  <g transform="translate(278 190) scale(.7)">
+    <circle cx="0" cy="-9" r="7" fill="#FFFFFF"/><circle cx="9" cy="0" r="7" fill="#FFFFFF"/>
+    <circle cx="0" cy="9" r="7" fill="#FFFFFF"/><circle cx="-9" cy="0" r="7" fill="#FFFFFF"/>
+    <circle r="5" fill="#F2C94C"/>
+  </g>
+</svg>
