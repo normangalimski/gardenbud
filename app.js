@@ -439,6 +439,13 @@ function bounds(data) {
   for (const l of data.labels || []) { r = Math.max(r, l.x + (l.text || '').length * 5); b = Math.max(b, l.y + 6); }
   return { r, b };
 }
+// A garden bed is an area drawn inside the main space. It gets its own green look.
+const inside = (o, s) => s.x >= o.x && s.y >= o.y && s.x + s.w <= o.x + o.w && s.y + s.h <= o.y + o.h;
+function isBed(s, shapes) {
+  if (s.cut) return false;
+  if (s.bed != null) return s.bed;
+  return shapes.some(o => o !== s && !o.cut && o.bed !== true && inside(o, s));
+}
 function shapeTag(s, attrs) {
   return s.kind === 'circle'
     ? `<ellipse cx="${s.x + s.w / 2}" cy="${s.y + s.h / 2}" rx="${s.w / 2}" ry="${s.h / 2}" ${attrs}/>`
@@ -458,6 +465,9 @@ function drawSvg(data, o) {
   const out = [];
   const titleH = o.title ? 90 / sc : 0;
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(cw * sc)}" height="${Math.round((ch + titleH) * sc)}" viewBox="0 ${-titleH} ${cw} ${ch + titleH}" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">`);
+  const dot = 8 / sc;
+  out.push(`<defs><pattern id="bed" width="${dot}" height="${dot}" patternUnits="userSpaceOnUse">
+    <rect width="100%" height="100%" fill="#d9eac4"/><circle cx="${dot / 2}" cy="${dot / 2}" r="${1.1 / sc}" fill="#9cc47e"/></pattern></defs>`);
   out.push(`<defs><pattern id="hatch" width="${10 / sc * 1.2}" height="${10 / sc * 1.2}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
     <rect width="100%" height="100%" fill="#e4dccb"/><line x1="0" y1="0" x2="0" y2="${10 / sc * 1.2}" stroke="#b9ad93" stroke-width="${3 / sc}"/></pattern></defs>`);
   out.push(`<rect x="0" y="${-titleH}" width="${cw}" height="${ch + titleH}" fill="${o.title ? '#ffffff' : '#e8ebe2'}"/>`);
@@ -484,11 +494,19 @@ function drawSvg(data, o) {
   }
   // garden area: outline pass, then fill pass, so overlapping shapes merge into one outline
   const shapes = data.shapes || [];
-  const adds = shapes.filter(s => !s.cut), cuts = shapes.filter(s => s.cut);
+  const adds = shapes.filter(s => !s.cut && !isBed(s, shapes)), beds = shapes.filter(s => isBed(s, shapes)), cuts = shapes.filter(s => s.cut);
   const interShapes = o.mode === 'shape';
   out.push('<g>');
   adds.forEach(s => out.push(shapeTag(s, `fill="none" stroke="#5b5f52" stroke-width="5" ${nss}`)));
   adds.forEach(s => out.push(shapeTag(s, `fill="#f7f2e2" ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`)));
+  beds.forEach(s => {
+    out.push(shapeTag(s, `fill="url(#bed)" stroke="#4e8f3a" stroke-width="2.5" ${nss} ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`));
+    if (s.label) {
+      const fs = clamp(12 * fk / sc, 2, Math.min(s.w, s.h) / 3);
+      const t = fitText(s.label, s.w, s.h, fs);
+      if (t) out.push(`<text x="${s.x + s.w / 2}" y="${s.y + s.h / 2}" font-size="${fs}" font-weight="600" text-anchor="middle" dominant-baseline="central" fill="#2f5e27" pointer-events="none">${esc(t)}</text>`);
+    }
+  });
   cuts.forEach(s => {
     out.push(shapeTag(s, `fill="url(#hatch)" stroke="#8a7f66" stroke-width="1.5" stroke-dasharray="5 4" ${nss} ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`));
     if (s.label) {
@@ -537,7 +555,9 @@ function thumbSvg(data) {
   const { r, b } = bounds(data);
   const w = Math.max(r + 20, 50), h = Math.max(b + 20, 30);
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">`];
-  (data.shapes || []).filter(s => !s.cut).forEach(s => parts.push(shapeTag(s, 'fill="#f7f2e2" stroke="#8b8f80" stroke-width="2" vector-effect="non-scaling-stroke"')));
+  const sh = data.shapes || [];
+  sh.filter(s => !s.cut && !isBed(s, sh)).forEach(s => parts.push(shapeTag(s, 'fill="#f7f2e2" stroke="#8b8f80" stroke-width="2" vector-effect="non-scaling-stroke"')));
+  sh.filter(s => isBed(s, sh)).forEach(s => parts.push(shapeTag(s, 'fill="#cfe3b6" stroke="#4e8f3a" stroke-width="1.5" vector-effect="non-scaling-stroke"')));
   (data.shapes || []).filter(s => s.cut).forEach(s => parts.push(shapeTag(s, 'fill="#ddd3bd"')));
   (data.items || []).forEach(it => parts.push(shapeTag(it.shape === 'circle' ? { ...it, kind: 'circle' } : it, `fill="${(CATS[it.cat] || CATS.other).color}"`)));
   parts.push('</svg>');
@@ -627,8 +647,10 @@ function renderToolbar() {
     ${ed.canEdit && ed.mode === 'items' ? '<button class="small primary" id="addItemBtn">+ Add</button>' : ''}
     ${ed.canEdit && ed.mode === 'shape' ? `
       ${tool('select', '✋ Select', 'Select and move')}
-      ${tool('rect', '▭ Area', 'Drag to draw a rectangle')}
-      ${tool('circle', '◯ Area', 'Drag to draw a circle')}
+      ${tool('rect', '▭ Space', 'Drag to draw the outline of the space (yard, patio, balcony)')}
+      ${tool('circle', '◯ Space', 'Drag to draw a round part of the space')}
+      ${tool('bedrect', '🌱 ▭ Bed', 'Drag to draw a rectangular garden bed')}
+      ${tool('bedcircle', '🌱 ◯ Bed', 'Drag to draw a round garden bed')}
       ${tool('cutrect', '▭ Cut-out', 'Drag to cut out a rectangle (tree, coop, furniture)')}
       ${tool('cutcircle', '◯ Cut-out', 'Drag to cut out a circle')}
       ${tool('label', 'T Label', 'Tap to place a label')}
@@ -658,8 +680,10 @@ function renderBanner() {
   else if (ed.mode === 'shape') {
     msg = {
       select: 'Tap a shape or label to edit it. Drag to move, drag the round handle to resize.',
-      rect: 'Drag on the grid to draw a rectangle. Touching or overlapping shapes join into one area.',
-      circle: 'Drag on the grid to draw a circle.',
+      rect: 'Drag to draw the outline of your space. Touching or overlapping pieces join into one outline (great for L-shapes).',
+      circle: 'Drag to draw a round part of your space.',
+      bedrect: 'Drag to draw a garden bed. Beds show in green so you can see them inside your space.',
+      bedcircle: 'Drag to draw a round garden bed.',
       cutrect: 'Drag to cut out a rectangle, like a tree, chicken coop or shed.',
       cutcircle: 'Drag to cut out a circle, like a tree trunk.',
       label: 'Tap where you want a label (Fence, House, Railing…).',
@@ -783,6 +807,7 @@ function onDown(e) {
     } else {
       const kind = ed.tool.includes('circle') ? 'circle' : 'rect';
       const sh = { id: uid(), kind, cut: ed.tool.startsWith('cut'), x: snap(p.x, 5), y: snap(p.y, 5), w: 0, h: 0 };
+      if (ed.tool.startsWith('bed')) { sh.bed = true; sh.label = ''; }
       if (sh.cut) sh.label = '';
       ed.data.shapes.push(sh);
       ed.drag = { ...start, type: 'draw', sh, x0: sh.x, y0: sh.y };
@@ -974,10 +999,11 @@ function addItemSheet() {
 // ---------------------------------------------------------------- shape + label sheets
 function shapeSheet(sh) {
   const ed = S.ed, u = unitLabel();
-  openSheet(`<h2>${sh.cut ? 'Cut-out' : 'Garden area'}</h2>
+  const type = sh.cut ? 'cut' : isBed(sh, ed.data.shapes) ? 'bed' : 'space';
+  openSheet(`<h2>${{ cut: 'Cut-out', bed: 'Garden bed', space: 'Space outline' }[type]}</h2>
     <div class="row">
-      <label>Type<select id="sCut"><option value="0">Garden area</option><option value="1">Cut-out (tree, coop, furniture)</option></select></label>
-      ${sh.cut ? `<label class="grow">Label<input type="text" id="sLabel" maxlength="40" value="${esc(sh.label || '')}" placeholder="e.g. Tree, Chicken coop"></label>` : ''}
+      <label>Type<select id="sCut"><option value="space">Space outline (yard, patio, balcony)</option><option value="bed">Garden bed (green)</option><option value="cut">Cut-out (tree, coop, furniture)</option></select></label>
+      ${type !== 'space' ? `<label class="grow">Label<input type="text" id="sLabel" maxlength="40" value="${esc(sh.label || '')}" placeholder="${type === 'bed' ? 'e.g. Veggie bed, Herbs' : 'e.g. Tree, Chicken coop'}"></label>` : ''}
     </div>
     <div class="row">
       <label>Shape<select id="sKind"><option value="rect">Rectangle</option><option value="circle">Circle</option></select></label>
@@ -985,7 +1011,7 @@ function shapeSheet(sh) {
       <label id="sHl" ${sh.kind === 'circle' ? 'hidden' : ''}>Length (${u})<input type="number" id="sH" step="any" value="${toDisp(sh.h)}"></label>
     </div>
     <div class="row"><button id="sDel" class="danger">Delete</button><span class="spacer"></span><button class="primary" id="sDone">Done</button></div>`);
-  $('#sCut').value = sh.cut ? '1' : '0'; $('#sKind').value = sh.kind;
+  $('#sCut').value = type; $('#sKind').value = sh.kind;
   const apply = () => {
     sh.kind = $('#sKind').value;
     sh.w = clamp(Math.round(fromDisp($('#sW').value)), 10, 10000);
@@ -996,9 +1022,14 @@ function shapeSheet(sh) {
     renderCanvas();
   };
   ['sKind', 'sW', 'sH', 'sLabel'].forEach(id => { const el = $('#' + id); if (!el) return; el.oninput = apply; el.onchange = () => { apply(); commit(); }; });
-  $('#sCut').onchange = () => { sh.cut = $('#sCut').value === '1'; if (sh.cut && sh.label == null) sh.label = ''; commit(); renderCanvas(); shapeSheet(sh); };
+  $('#sCut').onchange = () => {
+    const v = $('#sCut').value;
+    sh.cut = v === 'cut'; sh.bed = v === 'bed';
+    if (v !== 'space' && sh.label == null) sh.label = '';
+    commit(); renderCanvas(); shapeSheet(sh);
+  };
   $('#sDel').onclick = () => {
-    if (!sh.cut && ed.data.shapes.filter(s => !s.cut).length === 1) return toast('A garden needs at least one area');
+    if (type === 'space' && ed.data.shapes.filter(s => !s.cut && !isBed(s, ed.data.shapes)).length === 1) return toast('A garden needs at least one space outline');
     ed.data.shapes = ed.data.shapes.filter(s => s.id !== sh.id); ed.selShape = null; commit(); closeSheet(); renderCanvas();
   };
   $('#sDone').onclick = () => { commit(); ed.selShape = null; closeSheet(); renderCanvas(); };
