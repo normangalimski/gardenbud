@@ -439,6 +439,19 @@ function bounds(data) {
   for (const l of data.labels || []) { r = Math.max(r, l.x + (l.text || '').length * 5); b = Math.max(b, l.y + 6); }
   return { r, b };
 }
+const CURSORS = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
+// Which edge or corner of a shape is under the pointer (within tol cm), or ''
+function edgeHit(o, p, tol, isCircle) {
+  if (isCircle) {
+    const r = o.w / 2, cx = o.x + r, cy = o.y + r, dx = p.x - cx, dy = p.y - cy;
+    if (Math.abs(Math.hypot(dx, dy) - r) > tol) return '';
+    return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'e' : 'w') : (dy > 0 ? 's' : 'n');
+  }
+  let d = '';
+  if (Math.abs(p.y - o.y) <= tol) d += 'n'; else if (Math.abs(p.y - (o.y + o.h)) <= tol) d += 's';
+  if (Math.abs(p.x - o.x) <= tol) d += 'w'; else if (Math.abs(p.x - (o.x + o.w)) <= tol) d += 'e';
+  return d;
+}
 // A garden bed is an area drawn inside the main space. It gets its own green look.
 const inside = (o, s) => s.x >= o.x && s.y >= o.y && s.x + s.w <= o.x + o.w && s.y + s.h <= o.y + o.h;
 function isBed(s, shapes) {
@@ -538,13 +551,26 @@ function drawSvg(data, o) {
     out.push('</g>');
   }
   out.push('</g>');
-  // selected shape: outline + resize handle
+  // selected shape or item: outline + resize handles on corners and sides
+  const handles = (b, isCircle) => {
+    const hs = 6 / sc;
+    const dirs = isCircle ? ['n', 'e', 's', 'w'] : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+    for (const dir of dirs) {
+      const hx = dir.includes('w') ? b.x : dir.includes('e') ? b.x + b.w : b.x + b.w / 2;
+      const hy = dir.includes('n') ? b.y : dir.includes('s') ? b.y + b.h : b.y + b.h / 2;
+      out.push(`<rect data-hdir="${dir}" x="${hx - hs}" y="${hy - hs}" width="${hs * 2}" height="${hs * 2}" rx="${hs * .3}" fill="#fff" stroke="#f2b400" stroke-width="2" ${nss} style="cursor:${CURSORS[dir]}"/>`);
+    }
+  };
   if (interShapes && o.selShape) {
     const s = shapes.find(x => x.id === o.selShape);
     if (s) {
       out.push(shapeTag(s, `fill="none" stroke="#f2b400" stroke-width="3" ${nss} pointer-events="none"`));
-      out.push(`<circle data-handle="${s.id}" cx="${s.x + s.w}" cy="${s.y + s.h}" r="${11 / sc}" fill="#fff" stroke="#f2b400" stroke-width="3" ${nss} style="cursor:nwse-resize"/>`);
+      if (o.canEdit) handles(s, s.kind === 'circle');
     }
+  }
+  if (!interShapes && o.sel && o.canEdit) {
+    const it = (data.items || []).find(x => x.id === o.sel);
+    if (it) handles(it, it.shape === 'circle');
   }
   out.push('</svg>');
   return out.join('');
@@ -679,7 +705,7 @@ function renderBanner() {
   else if (!ed.canEdit) msg = `View only. ${esc(nameOf(ed.d.owner_id))} hasn't turned on editing for others. Use ⋯ More → Duplicate to make your own copy.`;
   else if (ed.mode === 'shape') {
     msg = {
-      select: 'Tap a shape or label to edit it. Drag to move, drag the round handle to resize.',
+      select: 'Tap a shape or label to edit it. Drag the middle to move it. Drag an edge to stretch that side, or a corner to stretch both ways.',
       rect: 'Drag to draw the outline of your space. Touching or overlapping pieces join into one outline (great for L-shapes).',
       circle: 'Drag to draw a round part of your space.',
       bedrect: 'Drag to draw a garden bed. Beds show in green so you can see them inside your space.',
@@ -708,7 +734,7 @@ function renderCanvas() {
   canvasSize();
   const st = $('#stage');
   st.classList.toggle('readonly', !ed.canEdit);
-  st.innerHTML = drawSvg(ed.data, { scale: ed.scale, cw: ed.cw, ch: ed.ch, mode: ed.mode, sel: ed.sel, selShape: ed.selShape, selLabel: ed.selLabel });
+  st.innerHTML = drawSvg(ed.data, { scale: ed.scale, cw: ed.cw, ch: ed.ch, mode: ed.mode, sel: ed.sel, selShape: ed.selShape, selLabel: ed.selLabel, canEdit: ed.canEdit });
   renderNorth();
 }
 
@@ -744,9 +770,9 @@ const snap = (v, s) => Math.round(v / s) * s;
 
 function hitInteractive(target) {
   const ed = S.ed; if (!ed || !ed.canEdit) return false;
-  if (ed.mode === 'items') return !!target.closest('.itm');
+  if (ed.mode === 'items') return !!target.closest('.itm,[data-hdir]');
   if (ed.tool !== 'select') return true;
-  return !!target.closest('[data-shape],[data-handle],[data-label]');
+  return !!target.closest('[data-shape],[data-hdir],[data-label]');
 }
 
 function wireStage() {
@@ -789,17 +815,33 @@ function onDown(e) {
   if (!e.target.closest('svg')) return;
   const p = toCm(e), t = e.target;
   const start = { px: e.clientX, py: e.clientY, p, moved: false };
+  const resizeDrag = (obj, dir, isItem) => ({ ...start, type: 'resize', obj, dir, isItem,
+    ox: obj.x, oy: obj.y, ow: obj.w, oh: obj.h, circle: isItem ? obj.shape === 'circle' : obj.kind === 'circle' });
+  const hd = t.closest('[data-hdir]');
   if (ed.mode === 'items') {
+    if (hd && ed.canEdit && ed.sel) {
+      const it = ed.data.items.find(i => i.id === ed.sel);
+      if (it) { ed.drag = resizeDrag(it, hd.dataset.hdir, true); try { $('#stage').setPointerCapture(e.pointerId); } catch (_) {} return; }
+    }
     const g = t.closest('.itm');
     if (!g) { if (ed.sel) { ed.sel = null; closeSheet(); renderCanvas(); } return; }
     const it = ed.data.items.find(i => i.id === g.dataset.id);
-    ed.drag = { ...start, type: 'item', it, ox: it.x, oy: it.y };
+    // grab the edge of the selected item to resize it (only if it's big enough on screen to also move)
+    const tol = Math.min(8 / ed.scale, Math.min(it.w, it.h) * 0.2);
+    const dir = ed.canEdit && ed.sel === it.id ? edgeHit(it, p, tol, it.shape === 'circle') : '';
+    ed.drag = dir ? resizeDrag(it, dir, true) : { ...start, type: 'item', it, ox: it.x, oy: it.y };
   } else {
     if (!ed.canEdit) return;
     if (ed.tool === 'select') {
-      const h = t.closest('[data-handle]'), s = t.closest('[data-shape]'), l = t.closest('[data-label]');
-      if (h) { const sh = ed.data.shapes.find(x => x.id === h.dataset.handle); ed.drag = { ...start, type: 'resize', sh, ow: sh.w, oh: sh.h }; }
-      else if (s) { const sh = ed.data.shapes.find(x => x.id === s.dataset.shape); ed.drag = { ...start, type: 'shape', sh, ox: sh.x, oy: sh.y }; }
+      const s = t.closest('[data-shape]'), l = t.closest('[data-label]');
+      const selSh = ed.selShape && ed.data.shapes.find(x => x.id === ed.selShape);
+      if (hd && selSh) ed.drag = resizeDrag(selSh, hd.dataset.hdir, false);
+      else if (s) {
+        const sh = ed.data.shapes.find(x => x.id === s.dataset.shape);
+        // grab any edge or corner of a shape to resize it, or the middle to move it
+        const dir = edgeHit(sh, p, Math.min(10 / ed.scale, Math.min(sh.w, sh.h) * 0.25), sh.kind === 'circle');
+        ed.drag = dir ? resizeDrag(sh, dir, false) : { ...start, type: 'shape', sh, ox: sh.x, oy: sh.y };
+      }
       else if (l) { const lb = ed.data.labels.find(x => x.id === l.dataset.label); ed.drag = { ...start, type: 'label', lb, ox: lb.x, oy: lb.y }; }
       else { if (ed.selShape || ed.selLabel) { ed.selShape = ed.selLabel = null; closeSheet(); renderCanvas(); } return; }
     } else if (ed.tool === 'label') {
@@ -817,7 +859,8 @@ function onDown(e) {
 }
 
 function onMove(e) {
-  const ed = S.ed; const d = ed && ed.drag; if (!d) return;
+  const ed = S.ed; const d = ed && ed.drag;
+  if (!d) { hoverCursor(e); return; }
   if (ed.pinching) { cancelDrag(); return; }
   const dxp = e.clientX - d.px, dyp = e.clientY - d.py;
   if (!d.moved && Math.hypot(dxp, dyp) < 5) return;
@@ -827,10 +870,7 @@ function onMove(e) {
   if (d.type === 'item') { d.it.x = Math.max(0, Math.round(d.ox + dx)); d.it.y = Math.max(0, Math.round(d.oy + dy)); ed.sel = d.it.id; }
   else if (d.type === 'shape') { d.sh.x = Math.max(0, snap(d.ox + dx, 5)); d.sh.y = Math.max(0, snap(d.oy + dy, 5)); ed.selShape = d.sh.id; }
   else if (d.type === 'label') { d.lb.x = Math.max(0, Math.round(d.ox + dx)); d.lb.y = Math.max(5, Math.round(d.oy + dy)); ed.selLabel = d.lb.id; }
-  else if (d.type === 'resize') {
-    d.sh.w = Math.max(10, snap(d.ow + dx, 5));
-    d.sh.h = d.sh.kind === 'circle' ? d.sh.w : Math.max(10, snap(d.oh + dy, 5));
-  } else if (d.type === 'draw') {
+  else if (d.type === 'resize') resizeObj(d, dx, dy); else if (d.type === 'draw') {
     let x1 = snap(p.x, 5), y1 = snap(p.y, 5);
     let w = Math.abs(x1 - d.x0), h = Math.abs(y1 - d.y0);
     if (d.sh.kind === 'circle') { w = h = Math.max(w, h); }
@@ -840,10 +880,53 @@ function onMove(e) {
   renderCanvas();
 }
 
+function hoverCursor(e) {
+  const ed = S.ed, st = $('#stage'); if (!ed || !ed.canEdit || e.pointerType === 'touch' || !st) return;
+  let cur = '';
+  const t = e.target;
+  if (ed.mode === 'shape' && ed.tool === 'select') {
+    const s = t.closest && t.closest('[data-shape]');
+    if (s) {
+      const sh = ed.data.shapes.find(x => x.id === s.dataset.shape);
+      const dir = sh && edgeHit(sh, toCm(e), Math.min(10 / ed.scale, Math.min(sh.w, sh.h) * 0.25), sh.kind === 'circle');
+      if (dir) cur = CURSORS[dir];
+    }
+  } else if (ed.mode === 'items' && ed.sel) {
+    const g = t.closest && t.closest('.itm');
+    const it = g && g.dataset.id === ed.sel && ed.data.items.find(i => i.id === ed.sel);
+    if (it) { const dir = edgeHit(it, toCm(e), Math.min(8 / ed.scale, Math.min(it.w, it.h) * 0.2), it.shape === 'circle'); if (dir) cur = CURSORS[dir]; }
+  }
+  st.style.cursor = cur;
+}
+
+function resizeObj(d, dx, dy) {
+  const o = d.obj, step = d.isItem ? 1 : 5, min = d.isItem ? 3 : 10, dir = d.dir;
+  const sn = v => Math.round(v / step) * step;
+  if (d.circle) {
+    // circles stay round: grow from the opposite side
+    const grow = { e: dx, w: -dx, s: dy, n: -dy };
+    const size0 = dir.length === 1 ? d.ow + grow[dir] : d.ow + Math.max(grow[dir[1]], grow[dir[0]]);
+    let size = size0;
+    size = Math.max(min, sn(size));
+    o.w = o.h = size;
+    o.x = dir.includes('w') ? d.ox + d.ow - size : dir.includes('e') ? d.ox : d.ox + (d.ow - size) / 2;
+    o.y = dir.includes('n') ? d.oy + d.oh - size : dir.includes('s') ? d.oy : d.oy + (d.oh - size) / 2;
+  } else {
+    if (dir.includes('e')) o.w = Math.max(min, sn(d.ow + dx));
+    if (dir.includes('w')) { o.w = Math.max(min, sn(d.ow - dx)); o.x = d.ox + d.ow - o.w; }
+    if (dir.includes('s')) o.h = Math.max(min, sn(d.oh + dy));
+    if (dir.includes('n')) { o.h = Math.max(min, sn(d.oh - dy)); o.y = d.oy + d.oh - o.h; }
+  }
+  if (o.x < 0) { o.w += o.x; o.x = 0; }
+  if (o.y < 0) { o.h += o.y; o.y = 0; }
+  if (d.isItem) S.ed.sel = o.id; else S.ed.selShape = o.id;
+}
+
 function cancelDrag() {
   const ed = S.ed, d = ed.drag; if (!d) return;
   if (d.type === 'item') { d.it.x = d.ox; d.it.y = d.oy; }
   if (d.type === 'shape') { d.sh.x = d.ox; d.sh.y = d.oy; }
+  if (d.type === 'resize') Object.assign(d.obj, { x: d.ox, y: d.oy, w: d.ow, h: d.oh });
   if (d.type === 'draw') ed.data.shapes = ed.data.shapes.filter(s => s !== d.sh);
   ed.drag = null; renderCanvas();
 }
@@ -857,10 +940,17 @@ function onUp(e) {
     return;
   }
   if (d.type === 'labeltap') { labelSheet(null, d.p); return; }
-  if (d.moved) { commit(); renderCanvas(); return; }
+  if (d.moved) {
+    commit(); renderCanvas();
+    // keep an open edit panel in sync with the new size
+    if (d.type === 'resize' && !$('#sheet').hidden) (d.isItem ? itemSheet : shapeSheet)(d.obj);
+    return;
+  }
   // a tap
   if (d.type === 'item') { ed.sel = d.it.id; renderCanvas(); itemSheet(d.it); }
-  else if (d.type === 'shape' || d.type === 'resize') { ed.selShape = d.sh.id; ed.selLabel = null; renderCanvas(); shapeSheet(d.sh); }
+  else if (d.type === 'resize' && d.isItem) { ed.sel = d.obj.id; renderCanvas(); itemSheet(d.obj); }
+  else if (d.type === 'resize') { ed.selShape = d.obj.id; ed.selLabel = null; renderCanvas(); shapeSheet(d.obj); }
+  else if (d.type === 'shape') { ed.selShape = d.sh.id; ed.selLabel = null; renderCanvas(); shapeSheet(d.sh); }
   else if (d.type === 'label') { ed.selLabel = d.lb.id; ed.selShape = null; renderCanvas(); labelSheet(d.lb); }
 }
 
