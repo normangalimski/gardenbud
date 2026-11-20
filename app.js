@@ -452,13 +452,22 @@ function edgeHit(o, p, tol, isCircle) {
   if (Math.abs(p.x - o.x) <= tol) d += 'w'; else if (Math.abs(p.x - (o.x + o.w)) <= tol) d += 'e';
   return d;
 }
-// A garden bed is an area drawn inside the main space. It gets its own green look.
+// Each shape plays one role:
+//  space = the outline of the whole area (pieces that touch join into one outline)
+//  zone  = a patio, seating or dining area inside the space (gray)
+//  bed   = a garden bed (green)
+//  cut   = something you can't plant on: house, tree, coop (hatched)
 const inside = (o, s) => s.x >= o.x && s.y >= o.y && s.x + s.w <= o.x + o.w && s.y + s.h <= o.y + o.h;
-function isBed(s, shapes) {
-  if (s.cut) return false;
-  if (s.bed != null) return s.bed;
-  return shapes.some(o => o !== s && !o.cut && o.bed !== true && inside(o, s));
+function roleOf(s, shapes) {
+  if (s.cut) return 'cut';
+  if (s.role) return s.role;
+  if (s.bed === true) return 'bed';
+  // anything drawn fully inside a bigger space outline is a zone
+  const outer = shapes.some(o => o !== s && !o.cut && o.bed !== true && (!o.role || o.role === 'space')
+    && inside(o, s) && o.w * o.h > s.w * s.h);
+  return outer ? 'zone' : 'space';
 }
+const isBed = (s, shapes) => roleOf(s, shapes) === 'bed';
 function shapeTag(s, attrs) {
   return s.kind === 'circle'
     ? `<ellipse cx="${s.x + s.w / 2}" cy="${s.y + s.h / 2}" rx="${s.w / 2}" ry="${s.h / 2}" ${attrs}/>`
@@ -507,19 +516,26 @@ function drawSvg(data, o) {
   }
   // garden area: outline pass, then fill pass, so overlapping shapes merge into one outline
   const shapes = data.shapes || [];
-  const adds = shapes.filter(s => !s.cut && !isBed(s, shapes)), beds = shapes.filter(s => isBed(s, shapes)), cuts = shapes.filter(s => s.cut);
+  const by = r => shapes.filter(s => roleOf(s, shapes) === r);
+  const adds = by('space'), zones = by('zone'), beds = by('bed'), cuts = by('cut');
   const interShapes = o.mode === 'shape';
   out.push('<g>');
   adds.forEach(s => out.push(shapeTag(s, `fill="none" stroke="#5b5f52" stroke-width="5" ${nss}`)));
   adds.forEach(s => out.push(shapeTag(s, `fill="#f7f2e2" ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`)));
-  beds.forEach(s => {
-    out.push(shapeTag(s, `fill="url(#bed)" stroke="#4e8f3a" stroke-width="2.5" ${nss} ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`));
+  adds.filter(s => s.label).forEach(s => {
+    const fs = 12 * fk / sc;
+    out.push(`<text x="${s.x + 6 / sc}" y="${s.y + fs + 4 / sc}" font-size="${fs}" font-weight="600" fill="#8a8470" pointer-events="none">${esc(s.label)}</text>`);
+  });
+  const filled = (list, fill, stroke, ink) => list.forEach(s => {
+    out.push(shapeTag(s, `fill="${fill}" stroke="${stroke}" stroke-width="2.5" ${nss} ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`));
     if (s.label) {
       const fs = clamp(12 * fk / sc, 2, Math.min(s.w, s.h) / 3);
       const t = fitText(s.label, s.w, s.h, fs);
-      if (t) out.push(`<text x="${s.x + s.w / 2}" y="${s.y + s.h / 2}" font-size="${fs}" font-weight="600" text-anchor="middle" dominant-baseline="central" fill="#2f5e27" pointer-events="none">${esc(t)}</text>`);
+      if (t) out.push(`<text x="${s.x + s.w / 2}" y="${s.y + s.h / 2}" font-size="${fs}" font-weight="600" text-anchor="middle" dominant-baseline="central" fill="${ink}" pointer-events="none">${esc(t)}</text>`);
     }
   });
+  filled(zones, '#e3e1db', '#7d8077', '#4a4d45');
+  filled(beds, 'url(#bed)', '#4e8f3a', '#2f5e27');
   cuts.forEach(s => {
     out.push(shapeTag(s, `fill="url(#hatch)" stroke="#8a7f66" stroke-width="1.5" stroke-dasharray="5 4" ${nss} ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`));
     if (s.label) {
@@ -582,7 +598,8 @@ function thumbSvg(data) {
   const w = Math.max(r + 20, 50), h = Math.max(b + 20, 30);
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">`];
   const sh = data.shapes || [];
-  sh.filter(s => !s.cut && !isBed(s, sh)).forEach(s => parts.push(shapeTag(s, 'fill="#f7f2e2" stroke="#8b8f80" stroke-width="2" vector-effect="non-scaling-stroke"')));
+  sh.filter(s => roleOf(s, sh) === 'space').forEach(s => parts.push(shapeTag(s, 'fill="#f7f2e2" stroke="#8b8f80" stroke-width="2" vector-effect="non-scaling-stroke"')));
+  sh.filter(s => roleOf(s, sh) === 'zone').forEach(s => parts.push(shapeTag(s, 'fill="#dedbd3" stroke="#8b8f80" stroke-width="1.5" vector-effect="non-scaling-stroke"')));
   sh.filter(s => isBed(s, sh)).forEach(s => parts.push(shapeTag(s, 'fill="#cfe3b6" stroke="#4e8f3a" stroke-width="1.5" vector-effect="non-scaling-stroke"')));
   (data.shapes || []).filter(s => s.cut).forEach(s => parts.push(shapeTag(s, 'fill="#ddd3bd"')));
   (data.items || []).forEach(it => parts.push(shapeTag(it.shape === 'circle' ? { ...it, kind: 'circle' } : it, `fill="${(CATS[it.cat] || CATS.other).color}"`)));
@@ -675,6 +692,7 @@ function renderToolbar() {
       ${tool('select', '✋ Select', 'Select and move')}
       ${tool('rect', '▭ Space', 'Drag to draw the outline of the space (yard, patio, balcony)')}
       ${tool('circle', '◯ Space', 'Drag to draw a round part of the space')}
+      ${tool('zonerect', '▦ Zone', 'Drag to draw a patio, seating or dining area')}
       ${tool('bedrect', '🌱 ▭ Bed', 'Drag to draw a rectangular garden bed')}
       ${tool('bedcircle', '🌱 ◯ Bed', 'Drag to draw a round garden bed')}
       ${tool('cutrect', '▭ Cut-out', 'Drag to cut out a rectangle (tree, coop, furniture)')}
@@ -708,6 +726,7 @@ function renderBanner() {
       select: 'Tap a shape or label to edit it. Drag the middle to move it. Drag an edge to stretch that side, or a corner to stretch both ways.',
       rect: 'Drag to draw the outline of your space. Touching or overlapping pieces join into one outline (great for L-shapes).',
       circle: 'Drag to draw a round part of your space.',
+      zonerect: 'Drag to draw a zone like a patio, dining or chill area. Zones show in gray. (A Space drawn inside your space becomes a zone too.)',
       bedrect: 'Drag to draw a garden bed. Beds show in green so you can see them inside your space.',
       bedcircle: 'Drag to draw a round garden bed.',
       cutrect: 'Drag to cut out a rectangle, like a tree, chicken coop or shed.',
@@ -849,7 +868,8 @@ function onDown(e) {
     } else {
       const kind = ed.tool.includes('circle') ? 'circle' : 'rect';
       const sh = { id: uid(), kind, cut: ed.tool.startsWith('cut'), x: snap(p.x, 5), y: snap(p.y, 5), w: 0, h: 0 };
-      if (ed.tool.startsWith('bed')) { sh.bed = true; sh.label = ''; }
+      if (ed.tool.startsWith('bed')) { sh.role = 'bed'; sh.label = ''; }
+      if (ed.tool.startsWith('zone')) { sh.role = 'zone'; sh.label = ''; }
       if (sh.cut) sh.label = '';
       ed.data.shapes.push(sh);
       ed.drag = { ...start, type: 'draw', sh, x0: sh.x, y0: sh.y };
@@ -1089,11 +1109,12 @@ function addItemSheet() {
 // ---------------------------------------------------------------- shape + label sheets
 function shapeSheet(sh) {
   const ed = S.ed, u = unitLabel();
-  const type = sh.cut ? 'cut' : isBed(sh, ed.data.shapes) ? 'bed' : 'space';
-  openSheet(`<h2>${{ cut: 'Cut-out', bed: 'Garden bed', space: 'Space outline' }[type]}</h2>
+  const type = roleOf(sh, ed.data.shapes);
+  const ph = { bed: 'e.g. Veggie bed, Herbs', zone: 'e.g. Patio, Dining area, Chill zone', cut: 'e.g. Tree, Chicken coop', space: 'e.g. Back yard' }[type];
+  openSheet(`<h2>${{ cut: 'Cut-out', bed: 'Garden bed', zone: 'Zone', space: 'Space outline' }[type]}</h2>
     <div class="row">
-      <label>Type<select id="sCut"><option value="space">Space outline (yard, patio, balcony)</option><option value="bed">Garden bed (green)</option><option value="cut">Cut-out (tree, coop, furniture)</option></select></label>
-      ${type !== 'space' ? `<label class="grow">Label<input type="text" id="sLabel" maxlength="40" value="${esc(sh.label || '')}" placeholder="${type === 'bed' ? 'e.g. Veggie bed, Herbs' : 'e.g. Tree, Chicken coop'}"></label>` : ''}
+      <label>Type<select id="sCut"><option value="space">Space outline (the whole yard, patio or balcony)</option><option value="zone">Zone (patio, seating, dining: gray)</option><option value="bed">Garden bed (green)</option><option value="cut">Cut-out (house, tree, coop)</option></select></label>
+      <label class="grow">Label<input type="text" id="sLabel" maxlength="40" value="${esc(sh.label || '')}" placeholder="${ph}"></label>
     </div>
     <div class="row">
       <label>Shape<select id="sKind"><option value="rect">Rectangle</option><option value="circle">Circle</option></select></label>
@@ -1114,12 +1135,13 @@ function shapeSheet(sh) {
   ['sKind', 'sW', 'sH', 'sLabel'].forEach(id => { const el = $('#' + id); if (!el) return; el.oninput = apply; el.onchange = () => { apply(); commit(); }; });
   $('#sCut').onchange = () => {
     const v = $('#sCut').value;
-    sh.cut = v === 'cut'; sh.bed = v === 'bed';
-    if (v !== 'space' && sh.label == null) sh.label = '';
+    sh.cut = v === 'cut'; delete sh.bed;
+    if (v === 'cut') delete sh.role; else sh.role = v;
+    if (sh.label == null) sh.label = '';
     commit(); renderCanvas(); shapeSheet(sh);
   };
   $('#sDel').onclick = () => {
-    if (type === 'space' && ed.data.shapes.filter(s => !s.cut && !isBed(s, ed.data.shapes)).length === 1) return toast('A garden needs at least one space outline');
+    if (type === 'space' && ed.data.shapes.filter(s => roleOf(s, ed.data.shapes) === 'space').length === 1) return toast('A garden needs at least one space outline');
     ed.data.shapes = ed.data.shapes.filter(s => s.id !== sh.id); ed.selShape = null; commit(); closeSheet(); renderCanvas();
   };
   $('#sDone').onclick = () => { commit(); ed.selShape = null; closeSheet(); renderCanvas(); };
