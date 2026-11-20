@@ -484,6 +484,12 @@ function roleOf(s, shapes) {
   return outer ? 'zone' : 'space';
 }
 const isBed = (s, shapes) => roleOf(s, shapes) === 'bed';
+// The main space outline is locked by default so it can't be dragged by accident.
+// You can still tap it to change its size, or unlock it from its edit panel.
+function isLocked(s, shapes) {
+  if (roleOf(s, shapes) !== 'space' || s.locked === false) return false;
+  return !shapes.some(o => o !== s && roleOf(o, shapes) === 'space' && inside(o, s) && o.w * o.h > s.w * s.h);
+}
 function shapeTag(s, attrs) {
   return s.kind === 'circle'
     ? `<ellipse cx="${s.x + s.w / 2}" cy="${s.y + s.h / 2}" rx="${s.w / 2}" ry="${s.h / 2}" ${attrs}/>`
@@ -540,7 +546,7 @@ function drawSvg(data, o) {
   const interShapes = o.mode === 'shape';
   out.push('<g>');
   adds.forEach(s => out.push(shapeTag(s, `fill="none" stroke="#5b5f52" stroke-width="5" ${nss}`)));
-  adds.forEach(s => out.push(shapeTag(s, `fill="#f7f2e2" ${interShapes ? `data-shape="${s.id}" class="shape-sel"` : ''}`)));
+  adds.forEach(s => out.push(shapeTag(s, `fill="#f7f2e2" ${interShapes ? `data-shape="${s.id}" ${isLocked(s, shapes) ? 'data-locked="1"' : 'class="shape-sel"'}` : ''}`)));
   adds.filter(s => s.label).forEach(s => {
     const fs = 12 * fk / sc;
     out.push(`<text x="${s.x + 6 / sc}" y="${s.y + fs + 4 / sc}" font-size="${fs}" font-weight="600" fill="#8a8470" pointer-events="none">${esc(s.label)}</text>`);
@@ -601,7 +607,7 @@ function drawSvg(data, o) {
     const s = shapes.find(x => x.id === o.selShape);
     if (s) {
       out.push(shapeTag(s, `fill="none" stroke="#f2b400" stroke-width="3" ${nss} pointer-events="none"`));
-      if (o.canEdit) handles(s, s.kind === 'circle');
+      if (o.canEdit && !isLocked(s, shapes)) handles(s, s.kind === 'circle');
     }
   }
   if (!interShapes && o.sel && o.canEdit) {
@@ -743,7 +749,7 @@ function renderBanner() {
   else if (!ed.canEdit) msg = `View only. ${esc(nameOf(ed.d.owner_id))} hasn't turned on editing for others. Use ⋯ More → Duplicate to make your own copy.`;
   else if (ed.mode === 'shape') {
     msg = {
-      select: 'Tap a shape or label to edit it. Drag the middle to move it. Drag an edge to stretch that side, or a corner to stretch both ways.',
+      select: 'Tap a shape or label to edit it. Drag the middle to move it, or an edge or corner to stretch it. The main space outline is 🔒 locked: tap it to change its size.',
       rect: 'Drag to draw the outline of your space. Touching or overlapping pieces join into one outline (great for L-shapes).',
       circle: 'Drag to draw a round part of your space.',
       zonerect: 'Drag to draw a zone like a patio, dining or chill area. Zones show in gray. (A Space drawn inside your space becomes a zone too.)',
@@ -811,6 +817,7 @@ function hitInteractive(target) {
   const ed = S.ed; if (!ed || !ed.canEdit) return false;
   if (ed.mode === 'items') return !!target.closest('.itm,[data-hdir]');
   if (ed.tool !== 'select') return true;
+  if (target.closest('[data-locked]')) return false; // let a finger on the locked outline scroll the view
   return !!target.closest('[data-shape],[data-hdir],[data-label]');
 }
 
@@ -877,6 +884,7 @@ function onDown(e) {
       if (hd && selSh) ed.drag = resizeDrag(selSh, hd.dataset.hdir, false);
       else if (s) {
         const sh = ed.data.shapes.find(x => x.id === s.dataset.shape);
+        if (isLocked(sh, ed.data.shapes)) { ed.drag = { ...start, type: 'locked', sh }; return; }
         // grab any edge or corner of a shape to resize it, or the middle to move it
         const dir = edgeHit(sh, p, Math.min(10 / ed.scale, Math.min(sh.w, sh.h) * 0.25), sh.kind === 'circle');
         ed.drag = dir ? resizeDrag(sh, dir, false) : { ...start, type: 'shape', sh, ox: sh.x, oy: sh.y };
@@ -905,6 +913,7 @@ function onMove(e) {
   const dxp = e.clientX - d.px, dyp = e.clientY - d.py;
   if (!d.moved && Math.hypot(dxp, dyp) < 5) return;
   if (!ed.canEdit && d.type === 'item') return;
+  if (d.type === 'locked') { ed.drag = null; return; }
   d.moved = true;
   const dx = dxp / ed.scale, dy = dyp / ed.scale, p = toCm(e);
   if (d.type === 'item') { d.it.x = Math.max(0, Math.round(d.ox + dx)); d.it.y = Math.max(0, Math.round(d.oy + dy)); ed.sel = d.it.id; }
@@ -926,7 +935,7 @@ function hoverCursor(e) {
   const t = e.target;
   if (ed.mode === 'shape' && ed.tool === 'select') {
     const s = t.closest && t.closest('[data-shape]');
-    if (s) {
+    if (s && !s.dataset.locked) {
       const sh = ed.data.shapes.find(x => x.id === s.dataset.shape);
       const dir = sh && edgeHit(sh, toCm(e), Math.min(10 / ed.scale, Math.min(sh.w, sh.h) * 0.25), sh.kind === 'circle');
       if (dir) cur = CURSORS[dir];
@@ -990,7 +999,7 @@ function onUp(e) {
   if (d.type === 'item') { ed.sel = d.it.id; renderCanvas(); itemSheet(d.it); }
   else if (d.type === 'resize' && d.isItem) { ed.sel = d.obj.id; renderCanvas(); itemSheet(d.obj); }
   else if (d.type === 'resize') { ed.selShape = d.obj.id; ed.selLabel = null; renderCanvas(); shapeSheet(d.obj); }
-  else if (d.type === 'shape') { ed.selShape = d.sh.id; ed.selLabel = null; renderCanvas(); shapeSheet(d.sh); }
+  else if (d.type === 'shape' || d.type === 'locked') { ed.selShape = d.sh.id; ed.selLabel = null; renderCanvas(); shapeSheet(d.sh); }
   else if (d.type === 'label') { ed.selLabel = d.lb.id; ed.selShape = null; renderCanvas(); labelSheet(d.lb); }
 }
 
@@ -1141,8 +1150,10 @@ function shapeSheet(sh) {
       <label id="sWl">${sh.kind === 'circle' ? 'Diameter' : 'Width'} (${u})<input type="number" id="sW" step="any" value="${toDisp(sh.w)}"></label>
       <label id="sHl" ${sh.kind === 'circle' ? 'hidden' : ''}>Length (${u})<input type="number" id="sH" step="any" value="${toDisp(sh.h)}"></label>
     </div>
+    ${type === 'space' ? `<label class="check"><input type="checkbox" id="sLock" ${sh.locked === false ? '' : 'checked'}> 🔒 Locked in place (stops accidental moves; you can still change the size here)</label>` : ''}
     <div class="row"><button id="sDel" class="danger">Delete</button><span class="spacer"></span><button class="primary" id="sDone">Done</button></div>`);
   $('#sCut').value = type; $('#sKind').value = sh.kind;
+  if ($('#sLock')) $('#sLock').onchange = e => { sh.locked = e.target.checked; commit(); renderCanvas(); };
   const apply = () => {
     sh.kind = $('#sKind').value;
     sh.w = clamp(Math.round(fromDisp($('#sW').value)), 10, 10000);
