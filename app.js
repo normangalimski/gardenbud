@@ -250,6 +250,21 @@ function openModal(html) {
 }
 function closeModal() { const m = $('#modal'); m.hidden = true; m.innerHTML = ''; }
 
+// ---------------------------------------------------------------- help
+const faq = (q, a) => `<details class="faq"><summary>${q}</summary><div>${a}</div></details>`;
+const HELP = `<div class="section-title">How to use GardenBud</div><div class="faqs">
+  ${faq('🌱 Start a garden', 'Tap <b>+ New garden</b>, give it a name and a size, and tap <b>Create</b>. Tap any garden in the list to open it.')}
+  ${faq('📐 Draw your space', 'In a garden, tap <b>📐 Garden shape</b>. Pick a tool, then drag on the grid:<br>• <b>Space</b>: the outline of your yard, patio or balcony (pieces that touch join together)<br>• <b>Zone</b>: a patio, dining or chill area (gray)<br>• <b>Bed</b>: a garden bed (green)<br>• <b>Cut-out</b>: the house, a shed, a tree or a coop (hatched)<br>• <b>Label</b>: tap to write a name like Fence or Driveway')}
+  ${faq('🪴 Add plants and pots', 'Tap <b>🪴 Plants &amp; pots</b>, then <b>+ Add</b>. Pick from the quick list or type your own name and size.')}
+  ${faq('✋ Move, resize and edit', '<b>Drag</b> something to move it. <b>Drag an edge</b> to stretch one side, or a <b>corner</b> to stretch both ways. <b>Tap</b> it to rename it, change its size or type, rotate, duplicate or delete it. Made a mistake? Tap <b>↶</b> to undo.')}
+  ${faq('🔍 Zoom in and out', 'Use the <b>− / +</b> buttons, pinch with two fingers on a phone, or hold <b>Ctrl</b> and scroll on a computer. <b>Fit</b> shows the whole garden.')}
+  ${faq('📝 Notes and 💬 comments', 'The round buttons on the right of a garden open <b>Notes</b> (plans and ideas) and <b>Comments</b> (chat with friends). A pink <b>!</b> means there is something new for you.')}
+  ${faq('💾 Saving', 'Everything saves by itself. Look for <b>Saved ✓</b> at the top. <b>⋯ More → Version history</b> lets you go back to an earlier version.')}
+  ${faq('👥 Share with friends', 'Tap <b>Invite a friend</b> and send the link. Friends can see every garden. Only the creator can edit, unless they turn on <b>⋯ More → Allow others to edit</b>. Anyone can <b>Duplicate</b> a garden to make their own copy.')}
+  ${faq('📱 Use it on your phone too', 'Don\'t reuse the invite link on your own phone, or you\'ll show up as a new person. Instead, go to <b>⚙️ Settings → Make a device link</b> and open that link on your other device within 15 minutes.')}
+  ${faq('🖨️ Print or back up a garden', 'In a garden, tap <b>⋯ More</b>. <b>Download image</b> gives you a picture to print. <b>Export file</b> saves a backup you can bring back later with <b>Import file</b>.')}
+</div>`;
+
 // ---------------------------------------------------------------- home
 async function renderHome() {
   if (S.ed) { flushSave(); S.ed = null; }
@@ -295,6 +310,7 @@ async function renderHome() {
         <div class="meta">deleted ${ago(d.deleted_at)}</div></div>
         <button class="small" data-restore="${d.id}">Restore</button>
         <button class="small danger" data-purge="${d.id}">Delete forever</button></div>`).join('')}</div>` : ''}
+    ${HELP}
   </div>`;
 
   $$('[data-open]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; setHash('d=' + el.dataset.open); });
