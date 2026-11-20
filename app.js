@@ -468,11 +468,14 @@ function drawSvg(data, o) {
   // grid
   if (o.grid !== false) {
     const imp = units() === 'imperial';
-    const step = imp ? 30.48 : 50, labelEvery = imp ? 5 : 2;
+    // pick a grid spacing that stays readable at this zoom (at least ~14 px apart)
+    const steps = imp ? [[30.48, 5], [152.4, 2], [304.8, 5], [1524, 2], [3048, 5]] : [[50, 2], [100, 5], [500, 2], [1000, 5], [5000, 2]];
+    let [step, labelEvery] = steps.find(([st]) => st * sc >= 14) || steps[steps.length - 1];
+    if (step * labelEvery * sc < 45) labelEvery *= 2;
     for (let i = 1, x = step; x < cw; i++, x += step) {
       const major = i % labelEvery === 0;
       out.push(`<line x1="${x}" y1="0" x2="${x}" y2="${ch}" stroke="rgba(0,0,0,${major ? .12 : .05})" stroke-width="1" ${nss}/>`);
-      if (major) out.push(`<text x="${x + 3 / sc}" y="${ch - 4 / sc}" font-size="${10 / sc}" fill="rgba(0,0,0,.35)">${imp ? i + ' ft' : (x / 100) + ' m'}</text>`);
+      if (major) out.push(`<text x="${x + 3 / sc}" y="${ch - 4 / sc}" font-size="${10 / sc}" fill="rgba(0,0,0,.35)">${imp ? Math.round(x / 30.48) + ' ft' : (x / 100) + ' m'}</text>`);
     }
     for (let i = 1, y = step; y < ch; i++, y += step) {
       const major = i % labelEvery === 0;
@@ -691,13 +694,13 @@ function fitZoom() {
   const ed = S.ed, st = $('#stage');
   canvasSize();
   const sc = Math.min((st.clientWidth - 60) / ed.cw, (st.clientHeight - 60) / ed.ch);
-  ed.scale = ed.fitBase = clamp(sc, 0.2, 8);
+  ed.scale = ed.fitBase = clamp(sc, 0.01, 8);
   renderCanvas(); updatePct();
   st.scrollLeft = 0; st.scrollTop = 0;
 }
 function zoomTo(next, fx, fy) {
   const ed = S.ed, st = $('#stage');
-  next = clamp(next, ed.fitBase * 0.4, 12);
+  next = clamp(next, ed.fitBase * 0.4, Math.max(12, ed.fitBase * 4));
   if (Math.abs(next - ed.scale) < 1e-4) return;
   const svg = $('svg', st); const r = svg.getBoundingClientRect(), sr = st.getBoundingClientRect();
   if (fx == null) { fx = sr.left + st.clientWidth / 2; fy = sr.top + st.clientHeight / 2; }
